@@ -209,7 +209,7 @@ def desenhar_cards(valor_total, quantidade_total, linhas_total, qtd_cidades):
         )
 
 
-st.title("Indicadores de Estoque EAs")
+st.title("Indicadores ds Estoques dos EAs")
 st.caption("Versão ajustada para evitar erros nos filtros, ampliar as visões e padronizar a formatação.")
 
 arquivo_padrao = Path(ARQUIVO)
