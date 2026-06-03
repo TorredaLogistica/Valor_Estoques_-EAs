@@ -7,7 +7,7 @@ from io import BytesIO
 st.set_page_config(page_title="Indicadores de Estoque EAs", layout="wide")
 
 ARQUIVO = "Valor Estoque EAs.xlsx"
-SHEET = "Valor Estoque EAs"
+SHEET = "Valor dos Estoques dos EAs"
 
 
 def formatar_moeda_br(valor):
