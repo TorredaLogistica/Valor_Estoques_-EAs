@@ -209,6 +209,44 @@ def desenhar_cards(valor_total, quantidade_total, qtd_depositos, qtd_cidades):
         )
 
 
+def _adicionar_rotulos_dentro_fora(fig_bar, base_plot, visao, metrica, max_valor):
+    """
+    Para TIPO DE MATERIAL:
+    - valores grandes ficam dentro da barra, no canto direito;
+    - valores pequenos ficam fora da barra, à direita.
+    A mesma regra vale para VALOR e QUANTIDADE.
+    """
+    limite_interno = max_valor * 0.12 if max_valor > 0 else 0
+
+    for _, row in base_plot.iterrows():
+        valor = float(row[metrica])
+        texto = row["TEXTO_FORMATADO"]
+        categoria = str(row[visao])
+
+        if valor >= limite_interno:
+            fig_bar.add_annotation(
+                x=max(valor - max_valor * 0.008, valor * 0.92),
+                y=categoria,
+                text=texto,
+                showarrow=False,
+                xanchor="right",
+                yanchor="middle",
+                font=dict(color="white", size=12),
+                align="right",
+            )
+        else:
+            fig_bar.add_annotation(
+                x=valor + max_valor * 0.008,
+                y=categoria,
+                text=texto,
+                showarrow=False,
+                xanchor="left",
+                yanchor="middle",
+                font=dict(color="#475467", size=12),
+                align="left",
+            )
+
+
 def montar_grafico_barras(agg_top, visao, metrica):
     orientacao = "h" if visao in ["TIPO DE MATERIAL", "CIDADE", "TIPO DE DESPESA", "UNIDADE"] else "v"
 
@@ -240,42 +278,9 @@ def montar_grafico_barras(agg_top, visao, metrica):
         else:
             fig_bar.update_xaxes(range=[0, max_valor + margem_extra])
 
-        # Regra específica solicitada para VALOR por TIPO DE MATERIAL:
-        # valores grandes ficam dentro da barra; valores pequenos ficam fora,
-        # preservando tamanho legível do texto.
-        if visao == "TIPO DE MATERIAL" and metrica == "VALOR":
-            limite_interno = max_valor * 0.12 if max_valor > 0 else 0
-            for _, row in base_plot.iterrows():
-                valor = float(row[metrica])
-                texto = row["TEXTO_FORMATADO"]
-                categoria = str(row[visao])
-
-                if valor >= limite_interno:
-                    fig_bar.add_annotation(
-                        x=max(valor * 0.01, max_valor * 0.003),
-                        y=categoria,
-                        text=texto,
-                        showarrow=False,
-                        xanchor="left",
-                        yanchor="middle",
-                        font=dict(color="white", size=12),
-                        align="left",
-                    )
-                else:
-                    fig_bar.add_annotation(
-                        x=valor + max_valor * 0.008,
-                        y=categoria,
-                        text=texto,
-                        showarrow=False,
-                        xanchor="left",
-                        yanchor="middle",
-                        font=dict(color="#475467", size=12),
-                        align="left",
-                    )
+        if visao == "TIPO DE MATERIAL" and metrica in ["VALOR", "QUANTIDADE"]:
+            _adicionar_rotulos_dentro_fora(fig_bar, base_plot, visao, metrica, max_valor)
         else:
-            base_plot["TEXTO_FORMATADO"] = base_plot[metrica].apply(
-                lambda x: formatar_moeda_br(x) if metrica == "VALOR" else formatar_numero_br(x)
-            )
             fig_bar.update_traces(text=base_plot["TEXTO_FORMATADO"], textposition="outside")
 
         return fig_bar
