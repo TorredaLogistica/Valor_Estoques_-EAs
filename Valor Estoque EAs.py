@@ -209,23 +209,41 @@ def desenhar_cards(valor_total, quantidade_total, qtd_depositos, qtd_cidades):
         )
 
 
+def _deve_ficar_dentro_barra(valor, max_valor, texto, metrica):
+    if max_valor <= 0:
+        return False
+
+    proporcao = valor / max_valor
+    tamanho_texto = len(str(texto))
+
+    # Regra mais conservadora para funcionar melhor no celular
+    if metrica == "VALOR":
+        limite_base = 0.22
+        if tamanho_texto >= 15:
+            limite_base = 0.26
+    else:  # QUANTIDADE
+        limite_base = 0.18
+        if tamanho_texto >= 10:
+            limite_base = 0.22
+
+    return proporcao >= limite_base
+
+
 def _adicionar_rotulos_dentro_fora(fig_bar, base_plot, visao, metrica, max_valor):
     """
     Para TIPO DE MATERIAL:
-    - valores grandes ficam dentro da barra, no canto direito;
-    - valores pequenos ficam fora da barra, à direita.
-    A mesma regra vale para VALOR e QUANTIDADE.
+    - barras grandes: rótulo dentro, no canto direito;
+    - barras menores: rótulo fora, à direita.
+    Regra calibrada para desktop e também para celular.
     """
-    limite_interno = max_valor * 0.12 if max_valor > 0 else 0
-
     for _, row in base_plot.iterrows():
         valor = float(row[metrica])
         texto = row["TEXTO_FORMATADO"]
         categoria = str(row[visao])
 
-        if valor >= limite_interno:
+        if _deve_ficar_dentro_barra(valor, max_valor, texto, metrica):
             fig_bar.add_annotation(
-                x=max(valor - max_valor * 0.008, valor * 0.92),
+                x=max(valor - max_valor * 0.010, valor * 0.90),
                 y=categoria,
                 text=texto,
                 showarrow=False,
@@ -236,7 +254,7 @@ def _adicionar_rotulos_dentro_fora(fig_bar, base_plot, visao, metrica, max_valor
             )
         else:
             fig_bar.add_annotation(
-                x=valor + max_valor * 0.008,
+                x=valor + max_valor * 0.010,
                 y=categoria,
                 text=texto,
                 showarrow=False,
@@ -260,13 +278,13 @@ def montar_grafico_barras(agg_top, visao, metrica):
             title=f"{metrica} por {visao}",
         )
         max_valor = float(base_plot[metrica].max()) if not base_plot.empty else 0.0
-        margem_extra = max_valor * 0.18 if max_valor > 0 else 1
+        margem_extra = max_valor * 0.24 if max_valor > 0 else 1
 
         fig_bar.update_layout(
             xaxis_title=metrica,
             yaxis_title=visao,
             height=max(450, 40 * len(base_plot)),
-            margin=dict(l=20, r=140, t=60, b=20),
+            margin=dict(l=20, r=170, t=60, b=20),
         )
         fig_bar.update_traces(
             hovertemplate=f"{visao}: %{{y}}<br>{metrica}: %{{x}}<extra></extra>",
