@@ -144,11 +144,11 @@ def gerar_excel_download(df_filtrado, agg=None, visao=None):
         df_filtrado.to_excel(writer, sheet_name="Base Filtrada", index=False)
 
         visao_geral = pd.DataFrame({
-            "Indicador": ["Valor Total", "Quantidade Total", "Linhas", "Cidades"],
+            "Indicador": ["Valor Total", "Quantidade Total", "Depósitos", "Cidades"],
             "Valor": [
                 df_filtrado["VALOR"].sum() if "VALOR" in df_filtrado.columns else 0,
                 df_filtrado["QUANTIDADE"].sum() if "QUANTIDADE" in df_filtrado.columns else 0,
-                len(df_filtrado),
+                df_filtrado["DEPOSITO"].nunique() if "DEPOSITO" in df_filtrado.columns else 0,
                 df_filtrado["CIDADE"].nunique() if "CIDADE" in df_filtrado.columns else 0,
             ]
         })
@@ -161,7 +161,7 @@ def gerar_excel_download(df_filtrado, agg=None, visao=None):
     return output
 
 
-def desenhar_cards(valor_total, quantidade_total, linhas_total, qtd_cidades):
+def desenhar_cards(valor_total, quantidade_total, qtd_depositos, qtd_cidades):
     st.markdown(
         """
         <style>
@@ -194,7 +194,7 @@ def desenhar_cards(valor_total, quantidade_total, linhas_total, qtd_cidades):
     cards = [
         ("Valor Total", formatar_moeda_br(valor_total)),
         ("Quantidade Total", formatar_numero_br(quantidade_total)),
-        ("Linhas", formatar_numero_br(linhas_total)),
+        ("Depósitos", formatar_numero_br(qtd_depositos)),
         ("Cidades", formatar_numero_br(qtd_cidades)),
     ]
     for col, (titulo, valor) in zip([c1, c2, c3, c4], cards):
@@ -245,10 +245,10 @@ for col, valores in filtros.items():
 
 valor_total = filtrado["VALOR"].sum() if "VALOR" in filtrado.columns else 0
 quantidade_total = filtrado["QUANTIDADE"].sum() if "QUANTIDADE" in filtrado.columns else 0
-linhas_total = len(filtrado)
+qtd_depositos = filtrado["DEPOSITO"].nunique() if "DEPOSITO" in filtrado.columns else 0
 qtd_cidades = filtrado["CIDADE"].nunique() if "CIDADE" in filtrado.columns else 0
 
-desenhar_cards(valor_total, quantidade_total, linhas_total, qtd_cidades)
+desenhar_cards(valor_total, quantidade_total, qtd_depositos, qtd_cidades)
 
 visoes = [
     "TIPO DE MATERIAL",
@@ -321,13 +321,27 @@ if not filtrado.empty and not agg.empty:
             fig_bar.update_layout(
                 xaxis_title=metrica,
                 yaxis_title=visao,
-                height=max(450, 40 * len(agg_top))
+                height=max(450, 40 * len(agg_top)),
+                margin=dict(l=20, r=120, t=60, b=20)
             )
-            fig_bar.update_traces(
-                textposition="outside",
-                hovertemplate=f"{visao}: %{{y}}<br>{metrica}: %{{text}}<extra></extra>",
-                cliponaxis=False,
-            )
+
+            # Ajuste solicitado: quando a visão for TIPO DE MATERIAL e a métrica for VALOR,
+            # exibir o valor dentro da barra para evitar truncamento do texto fora da coluna.
+            if visao == "TIPO DE MATERIAL" and metrica == "VALOR":
+                fig_bar.update_traces(
+                    textposition="inside",
+                    insidetextanchor="start",
+                    textfont=dict(color="white", size=12),
+                    hovertemplate=f"{visao}: %{{y}}<br>{metrica}: %{{text}}<extra></extra>",
+                    cliponaxis=False,
+                )
+            else:
+                fig_bar.update_traces(
+                    textposition="outside",
+                    hovertemplate=f"{visao}: %{{y}}<br>{metrica}: %{{text}}<extra></extra>",
+                    cliponaxis=False,
+                )
+
             if metrica == "VALOR":
                 fig_bar.update_xaxes(tickprefix="R$ ")
         else:
@@ -343,7 +357,7 @@ if not filtrado.empty and not agg.empty:
                 hovertemplate=f"{visao}: %{{x}}<br>{metrica}: %{{text}}<extra></extra>",
                 cliponaxis=False,
             )
-            fig_bar.update_layout(xaxis_title=visao, yaxis_title=metrica)
+            fig_bar.update_layout(xaxis_title=visao, yaxis_title=metrica, margin=dict(l=20, r=80, t=60, b=60))
             fig_bar.update_xaxes(tickangle=-35)
             if metrica == "VALOR":
                 fig_bar.update_yaxes(tickprefix="R$ ")
