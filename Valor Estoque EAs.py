@@ -209,6 +209,100 @@ def desenhar_cards(valor_total, quantidade_total, qtd_depositos, qtd_cidades):
         )
 
 
+def montar_grafico_barras(agg_top, visao, metrica):
+    orientacao = "h" if visao in ["TIPO DE MATERIAL", "CIDADE", "TIPO DE DESPESA", "UNIDADE"] else "v"
+
+    if orientacao == "h":
+        base_plot = agg_top.sort_values(metrica, ascending=True).copy()
+        fig_bar = px.bar(
+            base_plot,
+            x=metrica,
+            y=visao,
+            orientation="h",
+            title=f"{metrica} por {visao}",
+        )
+        max_valor = float(base_plot[metrica].max()) if not base_plot.empty else 0.0
+        margem_extra = max_valor * 0.18 if max_valor > 0 else 1
+
+        fig_bar.update_layout(
+            xaxis_title=metrica,
+            yaxis_title=visao,
+            height=max(450, 40 * len(base_plot)),
+            margin=dict(l=20, r=140, t=60, b=20),
+        )
+        fig_bar.update_traces(
+            hovertemplate=f"{visao}: %{{y}}<br>{metrica}: %{{x}}<extra></extra>",
+            cliponaxis=False,
+        )
+
+        if metrica == "VALOR":
+            fig_bar.update_xaxes(tickprefix="R$ ", range=[0, max_valor + margem_extra])
+        else:
+            fig_bar.update_xaxes(range=[0, max_valor + margem_extra])
+
+        # Regra específica solicitada para VALOR por TIPO DE MATERIAL:
+        # valores grandes ficam dentro da barra; valores pequenos ficam fora,
+        # preservando tamanho legível do texto.
+        if visao == "TIPO DE MATERIAL" and metrica == "VALOR":
+            limite_interno = max_valor * 0.12 if max_valor > 0 else 0
+            for _, row in base_plot.iterrows():
+                valor = float(row[metrica])
+                texto = row["TEXTO_FORMATADO"]
+                categoria = str(row[visao])
+
+                if valor >= limite_interno:
+                    fig_bar.add_annotation(
+                        x=max(valor * 0.01, max_valor * 0.003),
+                        y=categoria,
+                        text=texto,
+                        showarrow=False,
+                        xanchor="left",
+                        yanchor="middle",
+                        font=dict(color="white", size=12),
+                        align="left",
+                    )
+                else:
+                    fig_bar.add_annotation(
+                        x=valor + max_valor * 0.008,
+                        y=categoria,
+                        text=texto,
+                        showarrow=False,
+                        xanchor="left",
+                        yanchor="middle",
+                        font=dict(color="#475467", size=12),
+                        align="left",
+                    )
+        else:
+            base_plot["TEXTO_FORMATADO"] = base_plot[metrica].apply(
+                lambda x: formatar_moeda_br(x) if metrica == "VALOR" else formatar_numero_br(x)
+            )
+            fig_bar.update_traces(text=base_plot["TEXTO_FORMATADO"], textposition="outside")
+
+        return fig_bar
+
+    fig_bar = px.bar(
+        agg_top,
+        x=visao,
+        y=metrica,
+        text="TEXTO_FORMATADO",
+        title=f"{metrica} por {visao}",
+    )
+    fig_bar.update_traces(
+        textposition="outside",
+        hovertemplate=f"{visao}: %{{x}}<br>{metrica}: %{{text}}<extra></extra>",
+        cliponaxis=False,
+    )
+    fig_bar.update_layout(
+        xaxis_title=visao,
+        yaxis_title=metrica,
+        margin=dict(l=20, r=80, t=60, b=60)
+    )
+    fig_bar.update_xaxes(tickangle=-35)
+    if metrica == "VALOR":
+        fig_bar.update_yaxes(tickprefix="R$ ")
+    return fig_bar
+
+
 st.title("Indicadores dos Estoques dos EAs")
 st.caption("Versão ajustada para evitar erros nos filtros, ampliar as visões e padronizar a formatação.")
 
@@ -307,61 +401,7 @@ if not filtrado.empty and not agg.empty:
     aba1, aba2, aba3 = st.tabs(["Barras", "Pizza", "Tabela"])
 
     with aba1:
-        orientacao = "h" if visao in ["TIPO DE MATERIAL", "CIDADE", "TIPO DE DESPESA", "UNIDADE"] else "v"
-
-        if orientacao == "h":
-            fig_bar = px.bar(
-                agg_top.sort_values(metrica, ascending=True),
-                x=metrica,
-                y=visao,
-                text="TEXTO_FORMATADO",
-                orientation="h",
-                title=f"{metrica} por {visao}",
-            )
-            fig_bar.update_layout(
-                xaxis_title=metrica,
-                yaxis_title=visao,
-                height=max(450, 40 * len(agg_top)),
-                margin=dict(l=20, r=120, t=60, b=20)
-            )
-
-            # Ajuste solicitado: quando a visão for TIPO DE MATERIAL e a métrica for VALOR,
-            # exibir o valor dentro da barra para evitar truncamento do texto fora da coluna.
-            if visao == "TIPO DE MATERIAL" and metrica == "VALOR":
-                fig_bar.update_traces(
-                    textposition="inside",
-                    insidetextanchor="start",
-                    textfont=dict(color="white", size=12),
-                    hovertemplate=f"{visao}: %{{y}}<br>{metrica}: %{{text}}<extra></extra>",
-                    cliponaxis=False,
-                )
-            else:
-                fig_bar.update_traces(
-                    textposition="outside",
-                    hovertemplate=f"{visao}: %{{y}}<br>{metrica}: %{{text}}<extra></extra>",
-                    cliponaxis=False,
-                )
-
-            if metrica == "VALOR":
-                fig_bar.update_xaxes(tickprefix="R$ ")
-        else:
-            fig_bar = px.bar(
-                agg_top,
-                x=visao,
-                y=metrica,
-                text="TEXTO_FORMATADO",
-                title=f"{metrica} por {visao}",
-            )
-            fig_bar.update_traces(
-                textposition="outside",
-                hovertemplate=f"{visao}: %{{x}}<br>{metrica}: %{{text}}<extra></extra>",
-                cliponaxis=False,
-            )
-            fig_bar.update_layout(xaxis_title=visao, yaxis_title=metrica, margin=dict(l=20, r=80, t=60, b=60))
-            fig_bar.update_xaxes(tickangle=-35)
-            if metrica == "VALOR":
-                fig_bar.update_yaxes(tickprefix="R$ ")
-
+        fig_bar = montar_grafico_barras(agg_top, visao, metrica)
         st.plotly_chart(fig_bar, use_container_width=True)
 
     with aba2:
