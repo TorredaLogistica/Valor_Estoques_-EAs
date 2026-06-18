@@ -4,7 +4,7 @@ import plotly.express as px
 from pathlib import Path
 from io import BytesIO
 
-st.set_page_config(page_title="Indicadores de Estoque EAs", layout="wide")
+st.set_page_config(page_title="Valores dos Estoques dos EAs", layout="wide")
 
 ARQUIVO = "Valor Estoque EAs.xlsx"
 SHEET = "Valor dos Estoques dos EAs"
