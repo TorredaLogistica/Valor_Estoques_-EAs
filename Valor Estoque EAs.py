@@ -326,7 +326,7 @@ def montar_grafico_barras(agg_top, visao, metrica):
     return fig_bar
 
 
-st.title("Indicadores dos Estoques dos EAs")
+st.title("Valores dos Estoques dos EAs")
 st.caption("Versão ajustada para evitar erros nos filtros, ampliar as visões e padronizar a formatação.")
 
 arquivo_padrao = Path(ARQUIVO)
