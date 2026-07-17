@@ -4,7 +4,7 @@ import plotly.express as px
 from pathlib import Path
 from io import BytesIO
 
-st.set_page_config(page_title="Valores dos Estoques dos EAs - Julho/2026", layout="wide")
+st.set_page_config(page_title="Valores dos Estoques dos EAs", layout="wide")
 
 ARQUIVO = "Valor Estoque EAs.xlsx"
 SHEET = "Valor dos Estoques dos EAs"
@@ -326,7 +326,7 @@ def montar_grafico_barras(agg_top, visao, metrica):
     return fig_bar
 
 
-st.title("Valores dos Estoques dos EAs")
+st.title("Valores dos Estoques dos EAs - Julho 2026")
 st.caption("Versão ajustada para evitar erros nos filtros, ampliar as visões e padronizar a formatação.")
 
 arquivo_padrao = Path(ARQUIVO)
