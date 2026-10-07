@@ -259,7 +259,7 @@ with st.sidebar:
             .drop_duplicates().sort_values("DATA_REFERENCIA", ascending=False)
         )
         opcoes_periodo = periodos["MES_ANO"].tolist()
-        periodo_referencia = st.selectbox("Mês/Ano de referência", opcoes_periodo, index=0)
+        periodo_referencia = st.selectbox("Mês/Ano de referência", opcoes_periodo, index=0, key="mes_ano_referencia")
     else:
         periodo_referencia = None
         st.warning("Não foi localizada uma coluna de data, mês/ano ou competência na planilha.")
@@ -268,7 +268,7 @@ with st.sidebar:
     for coluna in ["TIPO DE MATERIAL", "CENTRO", "DEPOSITO", "REGIAO", "UF", "CIDADE", "TIPO ESTOQUE", "TIPO DE DESPESA", "UNIDADE"]:
         if coluna in base.columns:
             opcoes = sorted(base[coluna].dropna().astype(str).unique().tolist())
-            filtros[coluna] = st.multiselect(coluna, opcoes)
+            filtros[coluna] = st.multiselect(coluna, opcoes, key=f"filtro_{coluna}")
 
 base_com_filtros = aplicar_filtros(base, filtros)
 filtrado = base_com_filtros.copy()
@@ -297,14 +297,14 @@ with aba_atual:
         agg = agg[agg[metrica] != 0]
 
     if not agg.empty:
-        top_n = st.slider("Top N categorias", 1, min(30, len(agg)), min(10, len(agg))) if len(agg) > 1 else 1
+        top_n = st.slider("Top N categorias", 1, min(30, len(agg)), min(10, len(agg)), key="top_n_categorias") if len(agg) > 1 else 1
         agg_top = agg.head(top_n).copy()
         tab_barras, tab_pizza, tab_tabela = st.tabs(["Barras", "Pizza", "Tabela"])
         with tab_barras:
             st.plotly_chart(
                 montar_grafico_barras(agg_top, visao, metrica),
                 use_container_width=True,
-                key=f"grafico_barras_{visao}_{metrica}",
+                key="visao_atual_grafico_barras",
             )
         with tab_pizza:
             fig_pie = px.pie(agg_top, names=visao, values=metrica, title=f"Distribuição de {metrica} por {visao}")
@@ -312,7 +312,7 @@ with aba_atual:
             st.plotly_chart(
                 fig_pie,
                 use_container_width=True,
-                key=f"grafico_pizza_{visao}_{metrica}",
+                key="visao_atual_grafico_pizza",
             )
         with tab_tabela:
             st.dataframe(preparar_df_exibicao(agg), use_container_width=True, height=420)
@@ -328,9 +328,9 @@ with aba_evolucao:
     else:
         col_1, col_2 = st.columns([1, 1])
         with col_1:
-            janela = st.selectbox("Período da evolução", [12, 6, 3], index=0, format_func=lambda x: f"Últimos {x} meses")
+            janela = st.selectbox("Período da evolução", [12, 6, 3], index=0, format_func=lambda x: f"Últimos {x} meses", key="periodo_evolucao")
         with col_2:
-            metrica_evolucao = st.radio("Métrica da evolução", ["VALOR", "QUANTIDADE"], horizontal=True)
+            metrica_evolucao = st.radio("Métrica da evolução", ["VALOR", "QUANTIDADE"], horizontal=True, key="metrica_evolucao")
 
         evolucao_total = montar_evolucao(base_com_filtros, metrica_evolucao, janela)
         if evolucao_total.empty:
@@ -347,12 +347,12 @@ with aba_evolucao:
             st.plotly_chart(
                 fig_total,
                 use_container_width=True,
-                key=f"grafico_evolucao_total_{janela}_{metrica_evolucao}",
+                key="evolucao_mensal_grafico_total",
             )
 
             st.subheader("Evolução por tipo de material")
             materiais = sorted(base_com_filtros["TIPO DE MATERIAL"].dropna().astype(str).unique().tolist())
-            material_selecionado = st.selectbox("Selecione o tipo de material", materiais)
+            material_selecionado = st.selectbox("Selecione o tipo de material", materiais, key="material_evolucao")
             base_material = base_com_filtros[base_com_filtros["TIPO DE MATERIAL"] == material_selecionado]
             evolucao_material = montar_evolucao(base_material, metrica_evolucao, janela)
             if evolucao_material.empty:
@@ -369,7 +369,7 @@ with aba_evolucao:
                 st.plotly_chart(
                     fig_material,
                     use_container_width=True,
-                    key=f"grafico_evolucao_material_{janela}_{metrica_evolucao}_{material_selecionado}",
+                    key="evolucao_mensal_grafico_material",
                 )
 
 excel_bytes = gerar_excel_download(
