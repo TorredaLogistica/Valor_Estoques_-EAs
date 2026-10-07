@@ -125,7 +125,6 @@ def normalizar_texto(df):
 
 @st.cache_data(show_spinner=False)
 def carregar_dados(arquivo_parquet):
-    # O arquivo .parquet deve estar na raiz do repositório do GitHub.
     df = pd.read_parquet(arquivo_parquet, engine="pyarrow")
     df.columns = [str(c).strip() for c in df.columns]
     df = identificar_periodo(df)
@@ -246,7 +245,7 @@ st.caption("Análise do estoque por período, visão atual e evolução mensal."
 
 arquivo_padrao = Path(ARQUIVO)
 if not arquivo_padrao.exists():
-    st.error(f"Arquivo Parquet '{ARQUIVO}' não encontrado na raiz do repositório do GitHub.")
+    st.error(f"Arquivo Parquet '{ARQUIVO}' não encontrado na raiz do repositório.")
     st.stop()
 
 base = carregar_dados(arquivo_padrao)
