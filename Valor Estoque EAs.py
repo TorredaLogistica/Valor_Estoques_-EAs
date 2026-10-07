@@ -6,8 +6,11 @@ from io import BytesIO
 
 st.set_page_config(page_title="Valores dos Estoques dos EAs", layout="wide")
 
-ARQUIVO = "Valor Estoque EAs.xlsx"
-SHEET = "Valor dos Estoques dos EAs"
+ARQUIVO = "Valor Estoque EAs_Consolidado.parquet"
+MESES_PT = {
+    1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
+    7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
+}
 
 
 def formatar_moeda_br(valor):
@@ -30,107 +33,134 @@ def formatar_numero_br(valor, casas=0):
 
 def pick_column(columns, *names):
     columns = [str(c).strip() for c in columns]
-    for n in names:
-        for c in columns:
-            if c.lower() == n.lower():
-                return c
-    for n in names:
-        for c in columns:
-            if n.lower() in c.lower():
-                return c
+    for nome in names:
+        for coluna in columns:
+            if coluna.lower() == nome.lower():
+                return coluna
+    for nome in names:
+        for coluna in columns:
+            if nome.lower() in coluna.lower():
+                return coluna
     return None
 
 
+def converter_mes(valor):
+    if pd.isna(valor):
+        return pd.NA
+    texto = str(valor).strip().lower()
+    mapa = {
+        "jan": 1, "janeiro": 1, "fev": 2, "fevereiro": 2, "mar": 3, "março": 3,
+        "abr": 4, "abril": 4, "mai": 5, "maio": 5, "jun": 6, "junho": 6,
+        "jul": 7, "julho": 7, "ago": 8, "agosto": 8, "set": 9, "setembro": 9,
+        "out": 10, "outubro": 10, "nov": 11, "novembro": 11, "dez": 12, "dezembro": 12,
+    }
+    if texto in mapa:
+        return mapa[texto]
+    try:
+        numero = int(float(texto))
+        return numero if 1 <= numero <= 12 else pd.NA
+    except Exception:
+        return pd.NA
+
+
+def identificar_periodo(df):
+    """Cria DATA_REFERENCIA e MES_ANO usando data completa, mês/ano ou período textual."""
+    col_data = pick_column(
+        df.columns,
+        "DATA REFERÊNCIA", "DATA REFERENCIA", "DATA", "DT REFERÊNCIA", "DT REFERENCIA",
+        "DATA ESTOQUE", "DATA BASE", "COMPETÊNCIA", "COMPETENCIA",
+    )
+    col_periodo = pick_column(df.columns, "MÊS/ANO", "MES/ANO", "MÊS ANO", "MES ANO", "PERÍODO", "PERIODO")
+    col_mes = pick_column(df.columns, "MÊS", "MES")
+    col_ano = pick_column(df.columns, "ANO")
+
+    data_ref = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+
+    if col_data:
+        data_ref = pd.to_datetime(df[col_data], errors="coerce", dayfirst=True)
+
+    if data_ref.isna().all() and col_periodo:
+        texto = df[col_periodo].astype(str).str.strip()
+        data_ref = pd.to_datetime(texto, errors="coerce", dayfirst=True)
+        faltantes = data_ref.isna()
+        if faltantes.any():
+            extraido = texto.str.extract(r"(?P<mes>\d{1,2})\D+(?P<ano>\d{4})")
+            data_extraida = pd.to_datetime(
+                dict(
+                    year=pd.to_numeric(extraido["ano"], errors="coerce"),
+                    month=pd.to_numeric(extraido["mes"], errors="coerce"),
+                    day=1,
+                ),
+                errors="coerce",
+            )
+            data_ref = data_ref.fillna(data_extraida)
+
+    if data_ref.isna().all() and col_mes and col_ano:
+        mes = df[col_mes].apply(converter_mes)
+        ano = pd.to_numeric(df[col_ano], errors="coerce")
+        data_ref = pd.to_datetime(dict(year=ano, month=mes, day=1), errors="coerce")
+
+    if data_ref.notna().any():
+        df["DATA_REFERENCIA"] = data_ref.dt.to_period("M").dt.to_timestamp()
+        df["MES_ANO"] = df["DATA_REFERENCIA"].apply(
+            lambda x: f"{MESES_PT[x.month]}/{x.year}" if pd.notna(x) else "Não informado"
+        )
+    else:
+        df["DATA_REFERENCIA"] = pd.NaT
+        df["MES_ANO"] = "Não informado"
+    return df
+
+
 def normalizar_texto(df):
-    for c in df.columns:
-        if c not in ["QUANTIDADE", "VALOR"]:
-            df[c] = (
-                df[c]
-                .astype(str)
-                .str.strip()
-                .replace({
-                    "nan": "Não informado",
-                    "None": "Não informado",
-                    "": "Não informado",
-                    "<NA>": "Não informado",
-                })
+    ignorar = {"QUANTIDADE", "VALOR", "DATA_REFERENCIA"}
+    for coluna in df.columns:
+        if coluna not in ignorar:
+            df[coluna] = (
+                df[coluna].astype(str).str.strip()
+                .replace({"nan": "Não informado", "None": "Não informado", "": "Não informado", "<NA>": "Não informado"})
                 .fillna("Não informado")
             )
     return df
 
 
 @st.cache_data(show_spinner=False)
-def carregar_dados(arquivo_excel):
-    xls = pd.ExcelFile(arquivo_excel, engine="openpyxl")
-    sheet = SHEET if SHEET in xls.sheet_names else xls.sheet_names[0]
-    df = pd.read_excel(arquivo_excel, sheet_name=sheet, engine="openpyxl")
+def carregar_dados(arquivo_parquet):
+    # O arquivo .parquet deve estar na raiz do repositório do GitHub.
+    df = pd.read_parquet(arquivo_parquet, engine="pyarrow")
     df.columns = [str(c).strip() for c in df.columns]
+    df = identificar_periodo(df)
 
-    col_tipo_material = pick_column(df.columns, "TMar", "TMat") or "TMat"
-    col_centro = pick_column(df.columns, "Cen.") or "Cen."
-    col_deposito = pick_column(df.columns, "Dep.") or "Dep."
-    col_regiao = pick_column(df.columns, "REGIÃO", "REGIAO") or "REGIÃO"
-    col_uf = pick_column(df.columns, "UF") or "UF"
-    col_cidade = pick_column(df.columns, "CIDADE") or "CIDADE"
-    col_tipo_estoque = pick_column(df.columns, "TIPO ESTOQUE") or "TIPO ESTOQUE"
-    col_tipo_despesa = pick_column(df.columns, "TIPO DE DESPESA", "Tipo Despesa") or "Tipo Despesa"
-    col_unidade = pick_column(df.columns, "UNIDADE") or "UNIDADE"
-    col_qtd = pick_column(df.columns, "Utilização livre") or "Utilização livre"
-    col_valor = pick_column(df.columns, "Val.utiliz.livre") or "Val.utiliz.livre"
+    candidatos = {
+        "TIPO DE MATERIAL": pick_column(df.columns, "TMar", "TMat", "TIPO DE MATERIAL"),
+        "CENTRO": pick_column(df.columns, "Cen.", "CENTRO"),
+        "DEPOSITO": pick_column(df.columns, "Dep.", "DEPOSITO", "DEPÓSITO"),
+        "REGIAO": pick_column(df.columns, "REGIÃO", "REGIAO"),
+        "UF": pick_column(df.columns, "UF"),
+        "CIDADE": pick_column(df.columns, "CIDADE"),
+        "TIPO ESTOQUE": pick_column(df.columns, "TIPO ESTOQUE"),
+        "TIPO DE DESPESA": pick_column(df.columns, "TIPO DE DESPESA", "Tipo Despesa"),
+        "UNIDADE": pick_column(df.columns, "UNIDADE"),
+        "QUANTIDADE": pick_column(df.columns, "Utilização livre", "QUANTIDADE"),
+        "VALOR": pick_column(df.columns, "Val.utiliz.livre", "VALOR"),
+    }
 
-    selecionadas = [
-        c for c in [
-            col_tipo_material,
-            col_centro,
-            col_deposito,
-            col_regiao,
-            col_uf,
-            col_cidade,
-            col_tipo_estoque,
-            col_tipo_despesa,
-            col_unidade,
-            col_qtd,
-            col_valor,
-        ] if c in df.columns
-    ]
-
+    selecionadas = [c for c in candidatos.values() if c and c in df.columns]
+    selecionadas += ["DATA_REFERENCIA", "MES_ANO"]
+    selecionadas = list(dict.fromkeys(selecionadas))
     base = df[selecionadas].copy()
 
-    for c in [col_qtd, col_valor]:
-        if c in base.columns:
-            base[c] = pd.to_numeric(base[c], errors="coerce").fillna(0)
-
-    rename_map = {}
-    if col_tipo_material in base.columns:
-        rename_map[col_tipo_material] = "TIPO DE MATERIAL"
-    if col_centro in base.columns:
-        rename_map[col_centro] = "CENTRO"
-    if col_deposito in base.columns:
-        rename_map[col_deposito] = "DEPOSITO"
-    if col_regiao in base.columns:
-        rename_map[col_regiao] = "REGIAO"
-    if col_uf in base.columns:
-        rename_map[col_uf] = "UF"
-    if col_cidade in base.columns:
-        rename_map[col_cidade] = "CIDADE"
-    if col_tipo_estoque in base.columns:
-        rename_map[col_tipo_estoque] = "TIPO ESTOQUE"
-    if col_tipo_despesa in base.columns:
-        rename_map[col_tipo_despesa] = "TIPO DE DESPESA"
-    if col_unidade in base.columns:
-        rename_map[col_unidade] = "UNIDADE"
-    if col_qtd in base.columns:
-        rename_map[col_qtd] = "QUANTIDADE"
-    if col_valor in base.columns:
-        rename_map[col_valor] = "VALOR"
-
+    rename_map = {origem: destino for destino, origem in candidatos.items() if origem in base.columns}
     base = base.rename(columns=rename_map)
-    base = normalizar_texto(base)
-    return base
-
+    for coluna in ["QUANTIDADE", "VALOR"]:
+        if coluna not in base.columns:
+            base[coluna] = 0.0
+        base[coluna] = pd.to_numeric(base[coluna], errors="coerce").fillna(0)
+    return normalizar_texto(base)
 
 def preparar_df_exibicao(df):
     df_exib = df.copy()
+    if "DATA_REFERENCIA" in df_exib.columns:
+        df_exib = df_exib.drop(columns=["DATA_REFERENCIA"])
     if "VALOR" in df_exib.columns:
         df_exib["VALOR"] = df_exib["VALOR"].apply(formatar_moeda_br)
     if "QUANTIDADE" in df_exib.columns:
@@ -138,329 +168,202 @@ def preparar_df_exibicao(df):
     return df_exib
 
 
-def gerar_excel_download(df_filtrado, agg=None, visao=None):
+def gerar_excel_download(df_filtrado, agg=None, evolucao=None):
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_filtrado.to_excel(writer, sheet_name="Base Filtrada", index=False)
-
-        visao_geral = pd.DataFrame({
-            "Indicador": ["Valor Total", "Quantidade Total", "Depósitos", "Cidades"],
-            "Valor": [
-                df_filtrado["VALOR"].sum() if "VALOR" in df_filtrado.columns else 0,
-                df_filtrado["QUANTIDADE"].sum() if "QUANTIDADE" in df_filtrado.columns else 0,
-                df_filtrado["DEPOSITO"].nunique() if "DEPOSITO" in df_filtrado.columns else 0,
-                df_filtrado["CIDADE"].nunique() if "CIDADE" in df_filtrado.columns else 0,
-            ]
-        })
-        visao_geral.to_excel(writer, sheet_name="Visao Geral", index=False)
-
+        preparar_df_exibicao(df_filtrado).to_excel(writer, sheet_name="Base Filtrada", index=False)
         if agg is not None and not agg.empty:
-            nome_aba = f"Resumo_{visao}"[:31] if visao else "Resumo"
-            agg.to_excel(writer, sheet_name=nome_aba, index=False)
+            agg.to_excel(writer, sheet_name="Resumo Atual", index=False)
+        if evolucao is not None and not evolucao.empty:
+            evolucao.to_excel(writer, sheet_name="Evolucao Mensal", index=False)
     output.seek(0)
     return output
 
 
-def desenhar_cards(valor_total, quantidade_total, qtd_depositos, qtd_cidades):
-    st.markdown(
-        """
+def desenhar_cards(df):
+    valor_total = df["VALOR"].sum()
+    quantidade_total = df["QUANTIDADE"].sum()
+    qtd_depositos = df["DEPOSITO"].nunique() if "DEPOSITO" in df.columns else 0
+    qtd_cidades = df["CIDADE"].nunique() if "CIDADE" in df.columns else 0
+    st.markdown("""
         <style>
-        .kpi-card {
-            background-color: #ffffff;
-            border: 1px solid #E6E9EF;
-            border-radius: 12px;
-            padding: 14px 16px;
-            box-shadow: 0 1px 3px rgba(16,24,40,0.06);
-            min-height: 110px;
-        }
-        .kpi-label {
-            color: #475467;
-            font-size: 16px;
-            margin-bottom: 10px;
-        }
-        .kpi-value {
-            color: #101828;
-            font-size: 26px;
-            font-weight: 700;
-            line-height: 1.2;
-            word-break: break-word;
-        }
+        .kpi-card {background:#fff;border:1px solid #E6E9EF;border-radius:12px;padding:14px 16px;
+                   box-shadow:0 1px 3px rgba(16,24,40,.06);min-height:110px}
+        .kpi-label {color:#475467;font-size:16px;margin-bottom:10px}
+        .kpi-value {color:#101828;font-size:26px;font-weight:700;line-height:1.2;word-break:break-word}
         </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    c1, c2, c3, c4 = st.columns(4)
+    """, unsafe_allow_html=True)
     cards = [
         ("Valor Total", formatar_moeda_br(valor_total)),
         ("Quantidade Total", formatar_numero_br(quantidade_total)),
         ("Depósitos", formatar_numero_br(qtd_depositos)),
         ("Cidades", formatar_numero_br(qtd_cidades)),
     ]
-    for col, (titulo, valor) in zip([c1, c2, c3, c4], cards):
-        col.markdown(
-            f"""
-            <div class='kpi-card'>
-                <div class='kpi-label'>{titulo}</div>
-                <div class='kpi-value'>{valor}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    for coluna, (titulo, valor) in zip(st.columns(4), cards):
+        coluna.markdown(f"<div class='kpi-card'><div class='kpi-label'>{titulo}</div><div class='kpi-value'>{valor}</div></div>", unsafe_allow_html=True)
 
 
-def _deve_ficar_dentro_barra(valor, max_valor, texto, metrica):
-    if max_valor <= 0:
-        return False
-
-    proporcao = valor / max_valor
-    tamanho_texto = len(str(texto))
-
-    # Regra mais conservadora para funcionar melhor no celular
+def montar_grafico_barras(agg, visao, metrica):
+    horizontal = visao in ["TIPO DE MATERIAL", "CIDADE", "TIPO DE DESPESA", "UNIDADE"]
+    base_plot = agg.sort_values(metrica, ascending=horizontal).copy()
+    base_plot["TEXTO_FORMATADO"] = base_plot[metrica].apply(
+        lambda x: formatar_moeda_br(x) if metrica == "VALOR" else formatar_numero_br(x)
+    )
+    if horizontal:
+        fig = px.bar(base_plot, x=metrica, y=visao, orientation="h", text="TEXTO_FORMATADO", title=f"{metrica} por {visao}")
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_layout(height=max(450, 40 * len(base_plot)), margin=dict(l=20, r=150, t=60, b=20))
+    else:
+        fig = px.bar(base_plot, x=visao, y=metrica, text="TEXTO_FORMATADO", title=f"{metrica} por {visao}")
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_xaxes(tickangle=-35)
+        fig.update_layout(margin=dict(l=20, r=80, t=60, b=60))
     if metrica == "VALOR":
-        limite_base = 0.22
-        if tamanho_texto >= 15:
-            limite_base = 0.26
-    else:  # QUANTIDADE
-        limite_base = 0.18
-        if tamanho_texto >= 10:
-            limite_base = 0.22
-
-    return proporcao >= limite_base
+        fig.update_xaxes(tickprefix="R$ ") if horizontal else fig.update_yaxes(tickprefix="R$ ")
+    return fig
 
 
-def _adicionar_rotulos_dentro_fora(fig_bar, base_plot, visao, metrica, max_valor):
-    """
-    Para TIPO DE MATERIAL:
-    - barras grandes: rótulo dentro, no canto direito;
-    - barras menores: rótulo fora, à direita.
-    Regra calibrada para desktop e também para celular.
-    """
-    for _, row in base_plot.iterrows():
-        valor = float(row[metrica])
-        texto = row["TEXTO_FORMATADO"]
-        categoria = str(row[visao])
-
-        if _deve_ficar_dentro_barra(valor, max_valor, texto, metrica):
-            fig_bar.add_annotation(
-                x=max(valor - max_valor * 0.010, valor * 0.90),
-                y=categoria,
-                text=texto,
-                showarrow=False,
-                xanchor="right",
-                yanchor="middle",
-                font=dict(color="white", size=12),
-                align="right",
-            )
-        else:
-            fig_bar.add_annotation(
-                x=valor + max_valor * 0.010,
-                y=categoria,
-                text=texto,
-                showarrow=False,
-                xanchor="left",
-                yanchor="middle",
-                font=dict(color="#475467", size=12),
-                align="left",
-            )
+def aplicar_filtros(base, filtros):
+    resultado = base.copy()
+    for coluna, valores in filtros.items():
+        if valores:
+            resultado = resultado[resultado[coluna].isin(valores)]
+    return resultado
 
 
-def montar_grafico_barras(agg_top, visao, metrica):
-    orientacao = "h" if visao in ["TIPO DE MATERIAL", "CIDADE", "TIPO DE DESPESA", "UNIDADE"] else "v"
-
-    if orientacao == "h":
-        base_plot = agg_top.sort_values(metrica, ascending=True).copy()
-        fig_bar = px.bar(
-            base_plot,
-            x=metrica,
-            y=visao,
-            orientation="h",
-            title=f"{metrica} por {visao}",
-        )
-        max_valor = float(base_plot[metrica].max()) if not base_plot.empty else 0.0
-        margem_extra = max_valor * 0.24 if max_valor > 0 else 1
-
-        fig_bar.update_layout(
-            xaxis_title=metrica,
-            yaxis_title=visao,
-            height=max(450, 40 * len(base_plot)),
-            margin=dict(l=20, r=170, t=60, b=20),
-        )
-        fig_bar.update_traces(
-            hovertemplate=f"{visao}: %{{y}}<br>{metrica}: %{{x}}<extra></extra>",
-            cliponaxis=False,
-        )
-
-        if metrica == "VALOR":
-            fig_bar.update_xaxes(tickprefix="R$ ", range=[0, max_valor + margem_extra])
-        else:
-            fig_bar.update_xaxes(range=[0, max_valor + margem_extra])
-
-        if visao == "TIPO DE MATERIAL" and metrica in ["VALOR", "QUANTIDADE"]:
-            _adicionar_rotulos_dentro_fora(fig_bar, base_plot, visao, metrica, max_valor)
-        else:
-            fig_bar.update_traces(text=base_plot["TEXTO_FORMATADO"], textposition="outside")
-
-        return fig_bar
-
-    fig_bar = px.bar(
-        agg_top,
-        x=visao,
-        y=metrica,
-        text="TEXTO_FORMATADO",
-        title=f"{metrica} por {visao}",
-    )
-    fig_bar.update_traces(
-        textposition="outside",
-        hovertemplate=f"{visao}: %{{x}}<br>{metrica}: %{{text}}<extra></extra>",
-        cliponaxis=False,
-    )
-    fig_bar.update_layout(
-        xaxis_title=visao,
-        yaxis_title=metrica,
-        margin=dict(l=20, r=80, t=60, b=60)
-    )
-    fig_bar.update_xaxes(tickangle=-35)
-    if metrica == "VALOR":
-        fig_bar.update_yaxes(tickprefix="R$ ")
-    return fig_bar
+def montar_evolucao(df, metrica, meses):
+    if df["DATA_REFERENCIA"].notna().sum() == 0:
+        return pd.DataFrame()
+    data_maxima = df["DATA_REFERENCIA"].max()
+    inicio = data_maxima - pd.DateOffset(months=meses - 1)
+    recorte = df[df["DATA_REFERENCIA"].between(inicio, data_maxima)].copy()
+    evolucao = recorte.groupby(["DATA_REFERENCIA", "MES_ANO"], as_index=False)[["VALOR", "QUANTIDADE"]].sum()
+    return evolucao.sort_values("DATA_REFERENCIA")
 
 
-st.title("Valores dos Estoques dos EAs - Outubro 2026")
-st.caption("Versão ajustada para evitar erros nos filtros, ampliar as visões e padronizar a formatação.")
+st.title("Valores dos Estoques dos EAs")
+st.caption("Análise do estoque por período, visão atual e evolução mensal.")
 
 arquivo_padrao = Path(ARQUIVO)
 if not arquivo_padrao.exists():
-    st.error(f"Arquivo '{ARQUIVO}' não encontrado na raiz do repositório.")
+    st.error(f"Arquivo Parquet '{ARQUIVO}' não encontrado na raiz do repositório do GitHub.")
     st.stop()
 
 base = carregar_dados(arquivo_padrao)
+possui_periodo = base["DATA_REFERENCIA"].notna().any()
 
 with st.sidebar:
     st.header("Filtros")
-    filtros = {}
-    colunas_filtro = [
-        "TIPO DE MATERIAL",
-        "CENTRO",
-        "DEPOSITO",
-        "REGIAO",
-        "UF",
-        "CIDADE",
-        "TIPO ESTOQUE",
-        "TIPO DE DESPESA",
-        "UNIDADE",
-    ]
-    for col in colunas_filtro:
-        if col in base.columns:
-            opcoes = sorted(base[col].dropna().astype(str).unique().tolist())
-            filtros[col] = st.multiselect(col, opcoes)
-
-filtrado = base.copy()
-for col, valores in filtros.items():
-    if valores:
-        filtrado = filtrado[filtrado[col].isin(valores)]
-
-valor_total = filtrado["VALOR"].sum() if "VALOR" in filtrado.columns else 0
-quantidade_total = filtrado["QUANTIDADE"].sum() if "QUANTIDADE" in filtrado.columns else 0
-qtd_depositos = filtrado["DEPOSITO"].nunique() if "DEPOSITO" in filtrado.columns else 0
-qtd_cidades = filtrado["CIDADE"].nunique() if "CIDADE" in filtrado.columns else 0
-
-desenhar_cards(valor_total, quantidade_total, qtd_depositos, qtd_cidades)
-
-visoes = [
-    "TIPO DE MATERIAL",
-    "REGIAO",
-    "UF",
-    "CIDADE",
-    "TIPO ESTOQUE",
-    "TIPO DE DESPESA",
-    "UNIDADE",
-]
-visoes = [v for v in visoes if v in filtrado.columns]
-
-if not visoes:
-    st.warning("Não há colunas disponíveis para análise.")
-    st.stop()
-
-col_a, col_b = st.columns([2, 1])
-with col_a:
-    visao = st.selectbox("Visão do indicador", visoes)
-with col_b:
-    metrica = st.radio("Métrica", ["VALOR", "QUANTIDADE"], horizontal=True)
-
-if filtrado.empty:
-    st.warning("Os filtros selecionados não retornaram dados. Ajuste os filtros para visualizar os gráficos e tabelas.")
-    agg = pd.DataFrame()
-else:
-    agg = (
-        filtrado.groupby(visao, dropna=False)
-        .agg(VALOR=("VALOR", "sum"), QUANTIDADE=("QUANTIDADE", "sum"))
-        .reset_index()
-        .sort_values(metrica, ascending=False)
-    )
-    agg = agg[agg[metrica].fillna(0) != 0] if metrica in agg.columns else agg
-
-if not filtrado.empty and not agg.empty:
-    max_categorias = min(30, len(agg))
-    valor_inicial = min(10, len(agg))
-
-    if len(agg) == 1:
-        top_n = 1
-        st.caption("Apenas 1 categoria disponível para a seleção atual.")
+    if possui_periodo:
+        periodos = (
+            base[["DATA_REFERENCIA", "MES_ANO"]].dropna(subset=["DATA_REFERENCIA"])
+            .drop_duplicates().sort_values("DATA_REFERENCIA", ascending=False)
+        )
+        opcoes_periodo = periodos["MES_ANO"].tolist()
+        periodo_referencia = st.selectbox("Mês/Ano de referência", opcoes_periodo, index=0)
     else:
-        top_n = st.slider(
-            "Top N categorias",
-            min_value=1,
-            max_value=max_categorias,
-            value=valor_inicial,
-        )
+        periodo_referencia = None
+        st.warning("Não foi localizada uma coluna de data, mês/ano ou competência na planilha.")
 
-    agg_top = agg.head(top_n).copy()
-    agg_top[visao] = agg_top[visao].astype(str)
-    agg_top["TEXTO_FORMATADO"] = agg_top[metrica].apply(
-        lambda x: formatar_moeda_br(x) if metrica == "VALOR" else formatar_numero_br(x)
-    )
+    filtros = {}
+    for coluna in ["TIPO DE MATERIAL", "CENTRO", "DEPOSITO", "REGIAO", "UF", "CIDADE", "TIPO ESTOQUE", "TIPO DE DESPESA", "UNIDADE"]:
+        if coluna in base.columns:
+            opcoes = sorted(base[coluna].dropna().astype(str).unique().tolist())
+            filtros[coluna] = st.multiselect(coluna, opcoes)
 
-    aba1, aba2, aba3 = st.tabs(["Barras", "Pizza", "Tabela"])
+base_com_filtros = aplicar_filtros(base, filtros)
+filtrado = base_com_filtros.copy()
+if periodo_referencia:
+    filtrado = filtrado[filtrado["MES_ANO"] == periodo_referencia]
 
-    with aba1:
-        fig_bar = montar_grafico_barras(agg_top, visao, metrica)
-        st.plotly_chart(fig_bar, use_container_width=True)
+aba_atual, aba_evolucao = st.tabs(["Visão Atual", "Evolução Mensal"])
 
-    with aba2:
-        fig_pie = px.pie(
-            agg_top,
-            names=visao,
-            values=metrica,
-            title=f"Distribuição de {metrica} por {visao}",
-        )
-        if metrica == "VALOR":
-            fig_pie.update_traces(
-                texttemplate="%{label}<br>%{percent}",
-                hovertemplate=f"%{{label}}<br>{metrica}: %{{value:,.2f}}<br>%{{percent}}<extra></extra>"
-            )
+with aba_atual:
+    if periodo_referencia:
+        st.caption(f"Referência selecionada: {periodo_referencia}")
+    desenhar_cards(filtrado)
+
+    visoes = [v for v in ["TIPO DE MATERIAL", "REGIAO", "UF", "CIDADE", "TIPO ESTOQUE", "TIPO DE DESPESA", "UNIDADE"] if v in filtrado.columns]
+    col_a, col_b = st.columns([2, 1])
+    with col_a:
+        visao = st.selectbox("Visão do indicador", visoes, key="visao_atual")
+    with col_b:
+        metrica = st.radio("Métrica", ["VALOR", "QUANTIDADE"], horizontal=True, key="metrica_atual")
+
+    if filtrado.empty:
+        st.warning("Os filtros selecionados não retornaram dados.")
+        agg = pd.DataFrame()
+    else:
+        agg = filtrado.groupby(visao, dropna=False)[["VALOR", "QUANTIDADE"]].sum().reset_index().sort_values(metrica, ascending=False)
+        agg = agg[agg[metrica] != 0]
+
+    if not agg.empty:
+        top_n = st.slider("Top N categorias", 1, min(30, len(agg)), min(10, len(agg))) if len(agg) > 1 else 1
+        agg_top = agg.head(top_n).copy()
+        tab_barras, tab_pizza, tab_tabela = st.tabs(["Barras", "Pizza", "Tabela"])
+        with tab_barras:
+            st.plotly_chart(montar_grafico_barras(agg_top, visao, metrica), use_container_width=True)
+        with tab_pizza:
+            fig_pie = px.pie(agg_top, names=visao, values=metrica, title=f"Distribuição de {metrica} por {visao}")
+            fig_pie.update_traces(texttemplate="%{label}<br>%{percent}")
+            st.plotly_chart(fig_pie, use_container_width=True)
+        with tab_tabela:
+            st.dataframe(preparar_df_exibicao(agg), use_container_width=True, height=420)
+
+    st.subheader("Base filtrada")
+    st.dataframe(preparar_df_exibicao(filtrado), use_container_width=True, height=450)
+
+with aba_evolucao:
+    st.subheader("Evolução mensal do estoque")
+    if not possui_periodo:
+        st.info("Para exibir a evolução mensal, inclua na planilha uma coluna de Data, Mês/Ano, Competência ou as colunas Mês e Ano.")
+        evolucao_total = pd.DataFrame()
+    else:
+        col_1, col_2 = st.columns([1, 1])
+        with col_1:
+            janela = st.selectbox("Período da evolução", [12, 6, 3], index=0, format_func=lambda x: f"Últimos {x} meses")
+        with col_2:
+            metrica_evolucao = st.radio("Métrica da evolução", ["VALOR", "QUANTIDADE"], horizontal=True)
+
+        evolucao_total = montar_evolucao(base_com_filtros, metrica_evolucao, janela)
+        if evolucao_total.empty:
+            st.warning("Não há dados mensais para os filtros selecionados.")
         else:
-            fig_pie.update_traces(
-                texttemplate="%{label}<br>%{percent}",
-                hovertemplate=f"%{{label}}<br>{metrica}: %{{value:,.0f}}<br>%{{percent}}<extra></extra>"
+            fig_total = px.line(
+                evolucao_total, x="MES_ANO", y=metrica_evolucao, markers=True,
+                title=f"Evolução mensal do total do estoque - {metrica_evolucao}",
             )
-        st.plotly_chart(fig_pie, use_container_width=True)
+            fig_total.update_traces(line=dict(width=3), marker=dict(size=8))
+            fig_total.update_layout(xaxis_title="Mês/Ano", yaxis_title=metrica_evolucao, hovermode="x unified")
+            if metrica_evolucao == "VALOR":
+                fig_total.update_yaxes(tickprefix="R$ ")
+            st.plotly_chart(fig_total, use_container_width=True)
 
-    with aba3:
-        st.dataframe(preparar_df_exibicao(agg), use_container_width=True, height=420)
+            st.subheader("Evolução por tipo de material")
+            materiais = sorted(base_com_filtros["TIPO DE MATERIAL"].dropna().astype(str).unique().tolist())
+            material_selecionado = st.selectbox("Selecione o tipo de material", materiais)
+            base_material = base_com_filtros[base_com_filtros["TIPO DE MATERIAL"] == material_selecionado]
+            evolucao_material = montar_evolucao(base_material, metrica_evolucao, janela)
+            if evolucao_material.empty:
+                st.info("Não há dados mensais para o material selecionado.")
+            else:
+                fig_material = px.line(
+                    evolucao_material, x="MES_ANO", y=metrica_evolucao, markers=True,
+                    title=f"Evolução mensal - {material_selecionado}",
+                )
+                fig_material.update_traces(line=dict(width=3), marker=dict(size=8))
+                fig_material.update_layout(xaxis_title="Mês/Ano", yaxis_title=metrica_evolucao, hovermode="x unified")
+                if metrica_evolucao == "VALOR":
+                    fig_material.update_yaxes(tickprefix="R$ ")
+                st.plotly_chart(fig_material, use_container_width=True)
 
-elif filtrado.empty:
-    st.info("Sem dados para exibir nos gráficos com os filtros atuais.")
-else:
-    st.info("Sem categorias com valor ou quantidade para a visão selecionada.")
-
-st.subheader("Base filtrada")
-st.dataframe(preparar_df_exibicao(filtrado), use_container_width=True, height=450)
-
-excel_bytes = gerar_excel_download(filtrado, agg if 'agg' in locals() else None, visao)
+excel_bytes = gerar_excel_download(
+    filtrado,
+    agg if "agg" in locals() else None,
+    evolucao_total if "evolucao_total" in locals() else None,
+)
 st.download_button(
-    "Baixar base filtrada (.xlsx)",
-    data=excel_bytes,
+    "Baixar base filtrada (.xlsx)", data=excel_bytes,
     file_name="Base_Filtrada_Estoque_EAs.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
