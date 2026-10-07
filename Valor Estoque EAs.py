@@ -31,6 +31,40 @@ def formatar_numero_br(valor, casas=0):
     return f"{valor:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def formatar_valor_grafico(valor, metrica):
+    try:
+        valor = float(valor)
+    except Exception:
+        valor = 0.0
+
+    if metrica == "VALOR":
+        absoluto = abs(valor)
+        if absoluto >= 1_000_000_000:
+            return f"R$ {valor / 1_000_000_000:.1f} bi".replace(".", ",")
+        if absoluto >= 1_000_000:
+            return f"R$ {valor / 1_000_000:.1f} mi".replace(".", ",")
+        if absoluto >= 1_000:
+            return f"R$ {valor / 1_000:.1f} mil".replace(".", ",")
+        return formatar_moeda_br(valor)
+
+    absoluto = abs(valor)
+    if absoluto >= 1_000_000:
+        return f"{valor / 1_000_000:.1f} mi".replace(".", ",")
+    if absoluto >= 1_000:
+        return f"{valor / 1_000:.1f} mil".replace(".", ",")
+    return formatar_numero_br(valor)
+
+
+def preparar_rotulos_linha(df, metrica):
+    dados = df.copy()
+    dados["ROTULO_GRAFICO"] = dados[metrica].apply(lambda valor: formatar_valor_grafico(valor, metrica))
+    dados["ROTULO_COMPLETO"] = dados[metrica].apply(
+        lambda valor: formatar_moeda_br(valor) if metrica == "VALOR" else formatar_numero_br(valor)
+    )
+    dados["POSICAO_ROTULO"] = ["top center" if indice % 2 == 0 else "bottom center" for indice in range(len(dados))]
+    return dados
+
+
 def pick_column(columns, *names):
     columns = [str(c).strip() for c in columns]
     for nome in names:
@@ -299,22 +333,14 @@ with aba_atual:
     if not agg.empty:
         top_n = st.slider("Top N categorias", 1, min(30, len(agg)), min(10, len(agg)), key="top_n_categorias") if len(agg) > 1 else 1
         agg_top = agg.head(top_n).copy()
-        tab_barras, tab_pizza, tab_tabela = st.tabs(["Barras", "Pizza", "Tabela"])
-        with tab_barras:
-            st.plotly_chart(
-                montar_grafico_barras(agg_top, visao, metrica),
-                use_container_width=True,
-                key="visao_atual_grafico_barras",
-            )
-        with tab_pizza:
-            fig_pie = px.pie(agg_top, names=visao, values=metrica, title=f"Distribuição de {metrica} por {visao}")
-            fig_pie.update_traces(texttemplate="%{label}<br>%{percent}")
-            st.plotly_chart(
-                fig_pie,
-                use_container_width=True,
-                key="visao_atual_grafico_pizza",
-            )
-        with tab_tabela:
+        # Exibe somente um gráfico de barras na Visão Atual.
+        fig_barras = montar_grafico_barras(agg_top, visao, metrica)
+        st.plotly_chart(
+            fig_barras,
+            use_container_width=True,
+            key="visao_atual_grafico_barras_unico",
+        )
+        with st.expander("Ver tabela detalhada"):
             st.dataframe(preparar_df_exibicao(agg), use_container_width=True, height=420)
 
     st.subheader("Base filtrada")
@@ -336,12 +362,30 @@ with aba_evolucao:
         if evolucao_total.empty:
             st.warning("Não há dados mensais para os filtros selecionados.")
         else:
+            evolucao_total_plot = preparar_rotulos_linha(evolucao_total, metrica_evolucao)
             fig_total = px.line(
-                evolucao_total, x="MES_ANO", y=metrica_evolucao, markers=True,
+                evolucao_total_plot,
+                x="MES_ANO",
+                y=metrica_evolucao,
+                markers=True,
+                text="ROTULO_GRAFICO",
+                custom_data=["ROTULO_COMPLETO"],
                 title=f"Evolução mensal do total do estoque - {metrica_evolucao}",
             )
-            fig_total.update_traces(line=dict(width=3), marker=dict(size=8))
-            fig_total.update_layout(xaxis_title="Mês/Ano", yaxis_title=metrica_evolucao, hovermode="x unified")
+            fig_total.update_traces(
+                line=dict(width=3),
+                marker=dict(size=8),
+                textposition=evolucao_total_plot["POSICAO_ROTULO"].tolist(),
+                textfont=dict(size=12),
+                hovertemplate="%{x}<br>%{customdata[0]}<extra></extra>",
+                cliponaxis=False,
+            )
+            fig_total.update_layout(
+                xaxis_title="Mês/Ano",
+                yaxis_title=metrica_evolucao,
+                hovermode="x unified",
+                margin=dict(l=20, r=30, t=80, b=60),
+            )
             if metrica_evolucao == "VALOR":
                 fig_total.update_yaxes(tickprefix="R$ ")
             st.plotly_chart(
@@ -358,12 +402,30 @@ with aba_evolucao:
             if evolucao_material.empty:
                 st.info("Não há dados mensais para o material selecionado.")
             else:
+                evolucao_material_plot = preparar_rotulos_linha(evolucao_material, metrica_evolucao)
                 fig_material = px.line(
-                    evolucao_material, x="MES_ANO", y=metrica_evolucao, markers=True,
+                    evolucao_material_plot,
+                    x="MES_ANO",
+                    y=metrica_evolucao,
+                    markers=True,
+                    text="ROTULO_GRAFICO",
+                    custom_data=["ROTULO_COMPLETO"],
                     title=f"Evolução mensal - {material_selecionado}",
                 )
-                fig_material.update_traces(line=dict(width=3), marker=dict(size=8))
-                fig_material.update_layout(xaxis_title="Mês/Ano", yaxis_title=metrica_evolucao, hovermode="x unified")
+                fig_material.update_traces(
+                    line=dict(width=3),
+                    marker=dict(size=8),
+                    textposition=evolucao_material_plot["POSICAO_ROTULO"].tolist(),
+                    textfont=dict(size=12),
+                    hovertemplate="%{x}<br>%{customdata[0]}<extra></extra>",
+                    cliponaxis=False,
+                )
+                fig_material.update_layout(
+                    xaxis_title="Mês/Ano",
+                    yaxis_title=metrica_evolucao,
+                    hovermode="x unified",
+                    margin=dict(l=20, r=30, t=80, b=60),
+                )
                 if metrica_evolucao == "VALOR":
                     fig_material.update_yaxes(tickprefix="R$ ")
                 st.plotly_chart(
