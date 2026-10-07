@@ -275,7 +275,7 @@ def montar_evolucao(df, metrica, meses):
 
 
 st.title("Valores dos Estoques dos EAs")
-st.caption("Análise do estoque por período, visão atual e evolução mensal. | Versão: 2026.10.07.02")
+st.caption("Análise do estoque por período, visão atual e evolução mensal. | Versão: 2026.10.07.03")
 
 arquivo_padrao = Path(ARQUIVO)
 if not arquivo_padrao.exists():
@@ -333,15 +333,19 @@ with aba_atual:
     if not agg.empty:
         top_n = st.slider("Top N categorias", 1, min(30, len(agg)), min(10, len(agg)), key="top_n_categorias") if len(agg) > 1 else 1
         agg_top = agg.head(top_n).copy()
-        # Renderiza o gráfico de barras em um único contêiner.
-        # O contêiner é esvaziado antes do desenho para impedir retenção visual em reruns.
-        grafico_barras_container = st.empty()
-        grafico_barras_container.empty()
+        # Renderiza o gráfico de barras somente uma vez como HTML do Plotly.
+        # Esta forma evita a duplicação visual observada com st.plotly_chart no ambiente publicado.
         fig_barras = montar_grafico_barras(agg_top, visao, metrica)
-        grafico_barras_container.plotly_chart(
-            fig_barras,
-            use_container_width=True,
-            key="grafico_barras_visao_atual_v2",
+        altura_grafico = max(450, 40 * len(agg_top))
+        html_grafico = fig_barras.to_html(
+            full_html=False,
+            include_plotlyjs="cdn",
+            config={"displayModeBar": True, "responsive": True},
+        )
+        st.components.v1.html(
+            html_grafico,
+            height=altura_grafico + 40,
+            scrolling=False,
         )
         with st.expander("Ver tabela detalhada"):
             st.dataframe(preparar_df_exibicao(agg), use_container_width=True, height=420)
