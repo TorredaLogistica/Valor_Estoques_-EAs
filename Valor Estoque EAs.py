@@ -275,7 +275,7 @@ def montar_evolucao(df, metrica, meses):
 
 
 st.title("Valores dos Estoques dos EAs")
-st.caption("Análise do estoque por período, visão atual e evolução mensal.")
+st.caption("Análise do estoque por período, visão atual e evolução mensal. | Versão: 2026.10.07.02")
 
 arquivo_padrao = Path(ARQUIVO)
 if not arquivo_padrao.exists():
@@ -333,12 +333,15 @@ with aba_atual:
     if not agg.empty:
         top_n = st.slider("Top N categorias", 1, min(30, len(agg)), min(10, len(agg)), key="top_n_categorias") if len(agg) > 1 else 1
         agg_top = agg.head(top_n).copy()
-        # Exibe somente um gráfico de barras na Visão Atual.
+        # Renderiza o gráfico de barras em um único contêiner.
+        # O contêiner é esvaziado antes do desenho para impedir retenção visual em reruns.
+        grafico_barras_container = st.empty()
+        grafico_barras_container.empty()
         fig_barras = montar_grafico_barras(agg_top, visao, metrica)
-        st.plotly_chart(
+        grafico_barras_container.plotly_chart(
             fig_barras,
             use_container_width=True,
-            key="visao_atual_grafico_barras_unico",
+            key="grafico_barras_visao_atual_v2",
         )
         with st.expander("Ver tabela detalhada"):
             st.dataframe(preparar_df_exibicao(agg), use_container_width=True, height=420)
