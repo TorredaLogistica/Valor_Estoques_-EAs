@@ -301,11 +301,19 @@ with aba_atual:
         agg_top = agg.head(top_n).copy()
         tab_barras, tab_pizza, tab_tabela = st.tabs(["Barras", "Pizza", "Tabela"])
         with tab_barras:
-            st.plotly_chart(montar_grafico_barras(agg_top, visao, metrica), use_container_width=True)
+            st.plotly_chart(
+                montar_grafico_barras(agg_top, visao, metrica),
+                use_container_width=True,
+                key=f"grafico_barras_{visao}_{metrica}",
+            )
         with tab_pizza:
             fig_pie = px.pie(agg_top, names=visao, values=metrica, title=f"Distribuição de {metrica} por {visao}")
             fig_pie.update_traces(texttemplate="%{label}<br>%{percent}")
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(
+                fig_pie,
+                use_container_width=True,
+                key=f"grafico_pizza_{visao}_{metrica}",
+            )
         with tab_tabela:
             st.dataframe(preparar_df_exibicao(agg), use_container_width=True, height=420)
 
@@ -336,7 +344,11 @@ with aba_evolucao:
             fig_total.update_layout(xaxis_title="Mês/Ano", yaxis_title=metrica_evolucao, hovermode="x unified")
             if metrica_evolucao == "VALOR":
                 fig_total.update_yaxes(tickprefix="R$ ")
-            st.plotly_chart(fig_total, use_container_width=True)
+            st.plotly_chart(
+                fig_total,
+                use_container_width=True,
+                key=f"grafico_evolucao_total_{janela}_{metrica_evolucao}",
+            )
 
             st.subheader("Evolução por tipo de material")
             materiais = sorted(base_com_filtros["TIPO DE MATERIAL"].dropna().astype(str).unique().tolist())
@@ -354,7 +366,11 @@ with aba_evolucao:
                 fig_material.update_layout(xaxis_title="Mês/Ano", yaxis_title=metrica_evolucao, hovermode="x unified")
                 if metrica_evolucao == "VALOR":
                     fig_material.update_yaxes(tickprefix="R$ ")
-                st.plotly_chart(fig_material, use_container_width=True)
+                st.plotly_chart(
+                    fig_material,
+                    use_container_width=True,
+                    key=f"grafico_evolucao_material_{janela}_{metrica_evolucao}_{material_selecionado}",
+                )
 
 excel_bytes = gerar_excel_download(
     filtrado,
