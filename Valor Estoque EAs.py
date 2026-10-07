@@ -6,7 +6,8 @@ from io import BytesIO
 
 st.set_page_config(page_title="Valores dos Estoques dos EAs", layout="wide")
 
-ARQUIVO = "Valor Estoque EAs_Consolidado.parquet"
+ARQUIVO = "Valor Estoque EAs.xlsx"
+SHEET = "Valor dos Estoques dos EAs"
 MESES_PT = {
     1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
     7: "Jul", 8: "Ago", 9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
@@ -29,40 +30,6 @@ def formatar_numero_br(valor, casas=0):
     if casas == 0:
         return f"{valor:,.0f}".replace(",", ".")
     return f"{valor:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-
-def formatar_valor_grafico(valor, metrica):
-    try:
-        valor = float(valor)
-    except Exception:
-        valor = 0.0
-
-    if metrica == "VALOR":
-        absoluto = abs(valor)
-        if absoluto >= 1_000_000_000:
-            return f"R$ {valor / 1_000_000_000:.1f} bi".replace(".", ",")
-        if absoluto >= 1_000_000:
-            return f"R$ {valor / 1_000_000:.1f} mi".replace(".", ",")
-        if absoluto >= 1_000:
-            return f"R$ {valor / 1_000:.1f} mil".replace(".", ",")
-        return formatar_moeda_br(valor)
-
-    absoluto = abs(valor)
-    if absoluto >= 1_000_000:
-        return f"{valor / 1_000_000:.1f} mi".replace(".", ",")
-    if absoluto >= 1_000:
-        return f"{valor / 1_000:.1f} mil".replace(".", ",")
-    return formatar_numero_br(valor)
-
-
-def preparar_rotulos_linha(df, metrica):
-    dados = df.copy()
-    dados["ROTULO_GRAFICO"] = dados[metrica].apply(lambda valor: formatar_valor_grafico(valor, metrica))
-    dados["ROTULO_COMPLETO"] = dados[metrica].apply(
-        lambda valor: formatar_moeda_br(valor) if metrica == "VALOR" else formatar_numero_br(valor)
-    )
-    dados["POSICAO_ROTULO"] = ["top center" if indice % 2 == 0 else "bottom center" for indice in range(len(dados))]
-    return dados
 
 
 def pick_column(columns, *names):
@@ -158,8 +125,10 @@ def normalizar_texto(df):
 
 
 @st.cache_data(show_spinner=False)
-def carregar_dados(arquivo_parquet):
-    df = pd.read_parquet(arquivo_parquet, engine="pyarrow")
+def carregar_dados(arquivo_excel):
+    xls = pd.ExcelFile(arquivo_excel, engine="openpyxl")
+    sheet = SHEET if SHEET in xls.sheet_names else xls.sheet_names[0]
+    df = pd.read_excel(arquivo_excel, sheet_name=sheet, engine="openpyxl")
     df.columns = [str(c).strip() for c in df.columns]
     df = identificar_periodo(df)
 
@@ -189,6 +158,7 @@ def carregar_dados(arquivo_parquet):
             base[coluna] = 0.0
         base[coluna] = pd.to_numeric(base[coluna], errors="coerce").fillna(0)
     return normalizar_texto(base)
+
 
 def preparar_df_exibicao(df):
     df_exib = df.copy()
@@ -275,11 +245,11 @@ def montar_evolucao(df, metrica, meses):
 
 
 st.title("Valores dos Estoques dos EAs")
-st.caption("Análise do estoque por período, visão atual e evolução mensal. | Versão: 2026.10.07.03")
+st.caption("Análise do estoque por período, visão atual e evolução mensal.")
 
 arquivo_padrao = Path(ARQUIVO)
 if not arquivo_padrao.exists():
-    st.error(f"Arquivo Parquet '{ARQUIVO}' não encontrado na raiz do repositório.")
+    st.error(f"Arquivo '{ARQUIVO}' não encontrado na raiz do repositório.")
     st.stop()
 
 base = carregar_dados(arquivo_padrao)
@@ -293,7 +263,7 @@ with st.sidebar:
             .drop_duplicates().sort_values("DATA_REFERENCIA", ascending=False)
         )
         opcoes_periodo = periodos["MES_ANO"].tolist()
-        periodo_referencia = st.selectbox("Mês/Ano de referência", opcoes_periodo, index=0, key="mes_ano_referencia")
+        periodo_referencia = st.selectbox("Mês/Ano de referência", opcoes_periodo, index=0)
     else:
         periodo_referencia = None
         st.warning("Não foi localizada uma coluna de data, mês/ano ou competência na planilha.")
@@ -302,7 +272,7 @@ with st.sidebar:
     for coluna in ["TIPO DE MATERIAL", "CENTRO", "DEPOSITO", "REGIAO", "UF", "CIDADE", "TIPO ESTOQUE", "TIPO DE DESPESA", "UNIDADE"]:
         if coluna in base.columns:
             opcoes = sorted(base[coluna].dropna().astype(str).unique().tolist())
-            filtros[coluna] = st.multiselect(coluna, opcoes, key=f"filtro_{coluna}")
+            filtros[coluna] = st.multiselect(coluna, opcoes)
 
 base_com_filtros = aplicar_filtros(base, filtros)
 filtrado = base_com_filtros.copy()
@@ -331,23 +301,16 @@ with aba_atual:
         agg = agg[agg[metrica] != 0]
 
     if not agg.empty:
-        top_n = st.slider("Top N categorias", 1, min(30, len(agg)), min(10, len(agg)), key="top_n_categorias") if len(agg) > 1 else 1
+        top_n = st.slider("Top N categorias", 1, min(30, len(agg)), min(10, len(agg))) if len(agg) > 1 else 1
         agg_top = agg.head(top_n).copy()
-        # Renderiza o gráfico de barras somente uma vez como HTML do Plotly.
-        # Esta forma evita a duplicação visual observada com st.plotly_chart no ambiente publicado.
-        fig_barras = montar_grafico_barras(agg_top, visao, metrica)
-        altura_grafico = max(450, 40 * len(agg_top))
-        html_grafico = fig_barras.to_html(
-            full_html=False,
-            include_plotlyjs="cdn",
-            config={"displayModeBar": True, "responsive": True},
-        )
-        st.components.v1.html(
-            html_grafico,
-            height=altura_grafico + 40,
-            scrolling=False,
-        )
-        with st.expander("Ver tabela detalhada"):
+        tab_barras, tab_pizza, tab_tabela = st.tabs(["Barras", "Pizza", "Tabela"])
+        with tab_barras:
+            st.plotly_chart(montar_grafico_barras(agg_top, visao, metrica), use_container_width=True)
+        with tab_pizza:
+            fig_pie = px.pie(agg_top, names=visao, values=metrica, title=f"Distribuição de {metrica} por {visao}")
+            fig_pie.update_traces(texttemplate="%{label}<br>%{percent}")
+            st.plotly_chart(fig_pie, use_container_width=True)
+        with tab_tabela:
             st.dataframe(preparar_df_exibicao(agg), use_container_width=True, height=420)
 
     st.subheader("Base filtrada")
@@ -361,85 +324,41 @@ with aba_evolucao:
     else:
         col_1, col_2 = st.columns([1, 1])
         with col_1:
-            janela = st.selectbox("Período da evolução", [12, 6, 3], index=0, format_func=lambda x: f"Últimos {x} meses", key="periodo_evolucao")
+            janela = st.selectbox("Período da evolução", [12, 6, 3], index=0, format_func=lambda x: f"Últimos {x} meses")
         with col_2:
-            metrica_evolucao = st.radio("Métrica da evolução", ["VALOR", "QUANTIDADE"], horizontal=True, key="metrica_evolucao")
+            metrica_evolucao = st.radio("Métrica da evolução", ["VALOR", "QUANTIDADE"], horizontal=True)
 
         evolucao_total = montar_evolucao(base_com_filtros, metrica_evolucao, janela)
         if evolucao_total.empty:
             st.warning("Não há dados mensais para os filtros selecionados.")
         else:
-            evolucao_total_plot = preparar_rotulos_linha(evolucao_total, metrica_evolucao)
             fig_total = px.line(
-                evolucao_total_plot,
-                x="MES_ANO",
-                y=metrica_evolucao,
-                markers=True,
-                text="ROTULO_GRAFICO",
-                custom_data=["ROTULO_COMPLETO"],
+                evolucao_total, x="MES_ANO", y=metrica_evolucao, markers=True,
                 title=f"Evolução mensal do total do estoque - {metrica_evolucao}",
             )
-            fig_total.update_traces(
-                line=dict(width=3),
-                marker=dict(size=8),
-                textposition=evolucao_total_plot["POSICAO_ROTULO"].tolist(),
-                textfont=dict(size=12),
-                hovertemplate="%{x}<br>%{customdata[0]}<extra></extra>",
-                cliponaxis=False,
-            )
-            fig_total.update_layout(
-                xaxis_title="Mês/Ano",
-                yaxis_title=metrica_evolucao,
-                hovermode="x unified",
-                margin=dict(l=20, r=30, t=80, b=60),
-            )
+            fig_total.update_traces(line=dict(width=3), marker=dict(size=8))
+            fig_total.update_layout(xaxis_title="Mês/Ano", yaxis_title=metrica_evolucao, hovermode="x unified")
             if metrica_evolucao == "VALOR":
                 fig_total.update_yaxes(tickprefix="R$ ")
-            st.plotly_chart(
-                fig_total,
-                use_container_width=True,
-                key="evolucao_mensal_grafico_total",
-            )
+            st.plotly_chart(fig_total, use_container_width=True)
 
             st.subheader("Evolução por tipo de material")
             materiais = sorted(base_com_filtros["TIPO DE MATERIAL"].dropna().astype(str).unique().tolist())
-            material_selecionado = st.selectbox("Selecione o tipo de material", materiais, key="material_evolucao")
+            material_selecionado = st.selectbox("Selecione o tipo de material", materiais)
             base_material = base_com_filtros[base_com_filtros["TIPO DE MATERIAL"] == material_selecionado]
             evolucao_material = montar_evolucao(base_material, metrica_evolucao, janela)
             if evolucao_material.empty:
                 st.info("Não há dados mensais para o material selecionado.")
             else:
-                evolucao_material_plot = preparar_rotulos_linha(evolucao_material, metrica_evolucao)
                 fig_material = px.line(
-                    evolucao_material_plot,
-                    x="MES_ANO",
-                    y=metrica_evolucao,
-                    markers=True,
-                    text="ROTULO_GRAFICO",
-                    custom_data=["ROTULO_COMPLETO"],
+                    evolucao_material, x="MES_ANO", y=metrica_evolucao, markers=True,
                     title=f"Evolução mensal - {material_selecionado}",
                 )
-                fig_material.update_traces(
-                    line=dict(width=3),
-                    marker=dict(size=8),
-                    textposition=evolucao_material_plot["POSICAO_ROTULO"].tolist(),
-                    textfont=dict(size=12),
-                    hovertemplate="%{x}<br>%{customdata[0]}<extra></extra>",
-                    cliponaxis=False,
-                )
-                fig_material.update_layout(
-                    xaxis_title="Mês/Ano",
-                    yaxis_title=metrica_evolucao,
-                    hovermode="x unified",
-                    margin=dict(l=20, r=30, t=80, b=60),
-                )
+                fig_material.update_traces(line=dict(width=3), marker=dict(size=8))
+                fig_material.update_layout(xaxis_title="Mês/Ano", yaxis_title=metrica_evolucao, hovermode="x unified")
                 if metrica_evolucao == "VALOR":
                     fig_material.update_yaxes(tickprefix="R$ ")
-                st.plotly_chart(
-                    fig_material,
-                    use_container_width=True,
-                    key="evolucao_mensal_grafico_material",
-                )
+                st.plotly_chart(fig_material, use_container_width=True)
 
 excel_bytes = gerar_excel_download(
     filtrado,
